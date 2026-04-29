@@ -3,5 +3,12 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/silver-group-lead-form/'
+  base: '/',
+  build: {
+    outDir: 'dist',
+    rollupOptions: {
+      // Exclude server-only packages from the frontend bundle
+      external: [],
+    },
+  },
 })
