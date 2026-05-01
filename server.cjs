@@ -1,13 +1,20 @@
+// Load .env in local development (Vercel injects env vars directly, so .env is optional)
+const dotenvResult = require('dotenv').config();
+if (dotenvResult.error && !process.env.MONGODB_URI) {
+  console.warn('⚠️  No .env file found — make sure environment variables are set');
+}
+
 const express  = require('express');
 const { MongoClient, ObjectId } = require('mongodb');
 const cors     = require('cors');
 const axios    = require('axios');
 
 const app  = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
-// ─── CONFIGURATION ────────────────────────────────────────────────────────────
-const MONGODB_URI = "mongodb://yahyasirguroh_db_user:dknwd2A0TLVYkgwD@ac-ztmxqj8-shard-00-00.quxfls4.mongodb.net:27017,ac-ztmxqj8-shard-00-01.quxfls4.mongodb.net:27017,ac-ztmxqj8-shard-00-02.quxfls4.mongodb.net:27017/silvergroup?ssl=true&tls=true&replicaSet=atlas-krjyrr-shard-0&authSource=admin&retryWrites=true&w=majority";
+// ─── CONFIGURATION (all secrets loaded from environment variables) ────────────
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) throw new Error('❌ MONGODB_URI environment variable is not set');
 
 const DB_NAME             = 'silvergroup';
 const COLLECTION_LEADS    = 'tblleadform';
@@ -15,12 +22,12 @@ const COLLECTION_PROJECTS = 'tblproject';
 const COLLECTION_USERS    = 'tblusers';
 
 // Farvision ERP endpoint
-const FARVISION_URL       = 'https://fvintegration.farvisioncloud.com/LeadSync/api/SyncLeadsV2/RawLeads';
-const FARVISION_TENANT_ID = 995;
+const FARVISION_URL       = process.env.FARVISION_URL       || 'https://fvintegration.farvisioncloud.com/LeadSync/api/SyncLeadsV2/RawLeads';
+const FARVISION_TENANT_ID = process.env.FARVISION_TENANT_ID || 995;
 
 // GupShup SMS / OTP gateway
-const GUPSHUP_USERID   = '2000264784';
-const GUPSHUP_PASSWORD = 'ZSHN3pyY';
+const GUPSHUP_USERID   = process.env.GUPSHUP_USERID   || '2000264786';
+const GUPSHUP_PASSWORD = process.env.GUPSHUP_PASSWORD || 'ZSHN3pyz';
 const GUPSHUP_URL      = 'https://enterprise.smsgupshup.com/GatewayAPI/rest';
 const OTP_EXPIRY_MIN   = 10;                  // minutes OTP stays valid
 

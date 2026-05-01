@@ -4,19 +4,18 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently --kill-others --names \"SERVER,CLIENT\" --prefix-colors \"yellow,cyan\" \"npm run server\" \"npm run client\"",
+    "server": "node server.cjs",
+    "client": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "vite build && gh-pages -d dist"
   },
   "dependencies": {
-    "axios": "^1.15.1",
-    "cors": "^2.8.6",
-    "express": "^5.2.1",
     "lucide-react": "^0.263.1",
-    "mongodb": "^7.1.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "dotenv": "^16.4.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
@@ -26,6 +25,12 @@
     "gh-pages": "^5.0.0",
     "postcss": "^8.4.24",
     "tailwindcss": "^3.3.2",
-    "vite": "^4.5.14"
+    "vite": "^4.5.14",
+    "axios": "^1.15.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "mongodb": "^7.1.1",
+    "concurrently": "^8.2.0",
+    "nodemon": "^3.1.0"
   }
 }
