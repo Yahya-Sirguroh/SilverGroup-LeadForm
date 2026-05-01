@@ -2,6 +2,11 @@
   "version": 2,
   "buildCommand": "npm install && npm run dev",
   "outputDirectory": "dist",
+  "functions": {
+    "server.cjs": {
+      "runtime": "nodejs20.x"
+    }
+  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/server.cjs" },
     { "source": "/(.*)", "destination": "/index.html" }
