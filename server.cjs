@@ -10,10 +10,11 @@ const cors     = require('cors');
 const axios    = require('axios');
 
 const app  = express();
-const PORT = process.env.PORT || 5000;
-
+//const PORT = process.env.PORT || 5000;
+const PORT = 5000;
 // ─── CONFIGURATION (all secrets loaded from environment variables) ────────────
-const MONGODB_URI = process.env.MONGODB_URI;
+//const MONGODB_URI = process.env.MONGODB_URI;
+const MONGODB_URI = "mongodb://yahyasirguroh_db_user:dknwd2A0TLVYkgwD@ac-ztmxqj8-shard-00-00.quxfls4.mongodb.net:27017,ac-ztmxqj8-shard-00-01.quxfls4.mongodb.net:27017,ac-ztmxqj8-shard-00-02.quxfls4.mongodb.net:27017/silvergroup?ssl=true&tls=true&replicaSet=atlas-krjyrr-shard-0&authSource=admin&retryWrites=true&w=majority";
 if (!MONGODB_URI) throw new Error('❌ MONGODB_URI environment variable is not set');
 
 const DB_NAME             = 'silvergroup';
