@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2, CheckCircle, Phone } from 'lucide-react';
 
-const API_BASE = 'http://localhost:5000';
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 const LeadForm = () => {
   useEffect(() => {
@@ -75,13 +75,13 @@ const LeadForm = () => {
 
   // ── Background carousel ──
   const carouselImages = [
-    '/images/image1.png',
-    '/images/image2.jpeg',
-    '/images/image3.jpeg',
-    '/images/image4.jpeg',
-    '/images/image5.jpeg',
-    '/images/image6.jpeg',
-    '/images/image7.webp',
+    'image1.png',
+    'image2.jpeg',
+    'image3.jpeg',
+    'image4.jpeg',
+    'image5.jpeg',
+    'image6.jpeg',
+    'image7.webp',
   ];
   const CAROUSEL_INTERVAL = 5000; // ms between image changes
   const FADE_DURATION     = 1200; // ms for blur+fade (must match CSS transition below)
