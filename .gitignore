@@ -1,12 +1,9 @@
-# Environment variables — NEVER commit these
+# Local environment — has secrets, NEVER commit
 .env
 .env.local
-.env.production
-
-# Dependencies
-node_modules/
 
 # Build output
+node_modules/
 dist/
 
 # Logs
@@ -16,6 +13,3 @@ npm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
-
-.vercel
-.env*.local
