@@ -80,13 +80,13 @@ const LeadForm = () => {
 
   // ── Background carousel ──
   const carouselImages = [
-    'image1.png',
-    'image2.jpeg',
-    'image3.jpeg',
-    'image4.jpeg',
-    'image5.jpeg',
-    'image6.jpeg',
-    'image7.webp',
+    '/images/image1.png',
+    '/images/image2.jpeg',
+    '/images/image3.jpeg',
+    '/images/image4.jpeg',
+    '/images/image5.jpeg',
+    '/images/image6.jpeg',
+    '/images/image7.webp',
   ];
   const CAROUSEL_INTERVAL = 5000; // ms between image changes
   const FADE_DURATION     = 1200; // ms for blur+fade (must match CSS transition below)
@@ -342,7 +342,7 @@ const LeadForm = () => {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="h-16 w-16 mx-auto mb-4 rounded-full overflow-hidden">
-            <img src="SilverGroupLogow_oBG.png" alt="Silver Group Logo" className="w-full h-full object-cover" />
+            <img src="/images/SilverGroupLogow_oBG.png" alt="Silver Group Logo" className="w-full h-full object-cover" />
           </div>
           <h1 className="text-3xl md:text-4xl font-light text-white tracking-widest uppercase" style={{ fontFamily: "'Playfair Display', serif" }}>
             Silver Group
