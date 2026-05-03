@@ -2,7 +2,6 @@
   "name": "silver-group-lead-form",
   "private": true,
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
     "dev": "concurrently --kill-others --names \"SERVER,CLIENT\" --prefix-colors \"yellow,cyan\" \"npm run server\" \"npm run client\"",
     "server": "node server.cjs",
