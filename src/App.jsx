@@ -81,31 +81,30 @@ const LeadForm = () => {
   // ── Background carousel ──
   const carouselImages = [
     '/images/image1.png',
-    '/images/image2.jpeg',
     '/images/image3.jpeg',
     '/images/image4.jpeg',
-    '/images/image5.jpeg',
-    '/images/image6.jpeg',
-    '/images/image7.webp',
+    '/images/image6.jpeg'
   ];
-  const CAROUSEL_INTERVAL = 5000; // ms between image changes
-  const FADE_DURATION     = 1200; // ms for blur+fade (must match CSS transition below)
+  const CAROUSEL_INTERVAL = 6000; // ms between image changes
+  const FADE_DURATION     = 1500; // ms for blur+fade (must match CSS transition below)
 
   const [currentBg, setCurrentBg]         = useState(0);
   const [nextBg, setNextBg]               = useState(1);
   const [transitioning, setTransitioning] = useState(false);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTransitioning(true);
-      setTimeout(() => {
-        setCurrentBg(i => (i + 1) % carouselImages.length);
-        setNextBg(i    => (i + 2) % carouselImages.length);
-        setTransitioning(false);
-      }, FADE_DURATION);
-    }, CAROUSEL_INTERVAL);
-    return () => clearInterval(timer);
-  }, []);
+useEffect(() => {
+  const timer = setInterval(() => {
+    setNextBg((currentBg + 1) % carouselImages.length);
+    setTransitioning(true);
+
+    setTimeout(() => {
+      setCurrentBg((prev) => (prev + 1) % carouselImages.length);
+      setTransitioning(false);
+    }, FADE_DURATION);
+  }, CAROUSEL_INTERVAL);
+
+  return () => clearInterval(timer);
+}, [currentBg]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -297,7 +296,7 @@ const LeadForm = () => {
 
       {/* ── Carousel Layer A: current image (always fully visible) ── */}
       <div
-        className="absolute inset-0"
+        className="fixed inset-0"
         style={{
           zIndex: 0,
           backgroundColor: '#111111',
@@ -312,7 +311,7 @@ const LeadForm = () => {
 
       {/* ── Carousel Layer B: next image fading in over Layer A ── */}
       <div
-        className="absolute inset-0"
+        className="fixed inset-0"
         style={{
           zIndex: 1,
           backgroundImage: `url("${carouselImages[nextBg]}")`,
