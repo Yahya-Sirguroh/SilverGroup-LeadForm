@@ -180,16 +180,18 @@ app.post('/api/leads', async (req, res) => {
 
     const mongoResult = await database.collection(COL_LEADS).insertOne(leadData);
 
-    // Push to Farvision (non-blocking)
-    let farvisionStatus = 'pending';
-    try {
-      const payload = buildFarvisionPayload(leadData);
-      const fvRes = await axios.request({ method: 'post', maxBodyLength: Infinity, url: FARVISION_URL, headers: { 'Content-Type': 'application/json' }, data: payload, timeout: 15000 });
-      farvisionStatus = 'success';
-      await database.collection(COL_LEADS).updateOne({ _id: mongoResult.insertedId }, { $set: { farvisionSynced: true, farvisionSyncedAt: new Date(), farvisionResponse: fvRes.data } });
-    } catch (fvErr) {
-      farvisionStatus = 'failed';
-      await database.collection(COL_LEADS).updateOne({ _id: mongoResult.insertedId }, { $set: { farvisionSynced: false, farvisionError: fvErr.message } });
+    // Push to Farvision only when skipErp is NOT set
+    let farvisionStatus = 'skipped';
+    if (!req.body.skipErp) {
+      try {
+        const payload = buildFarvisionPayload(leadData);
+        const fvRes = await axios.request({ method: 'post', maxBodyLength: Infinity, url: FARVISION_URL, headers: { 'Content-Type': 'application/json' }, data: payload, timeout: 15000 });
+        farvisionStatus = 'success';
+        await database.collection(COL_LEADS).updateOne({ _id: mongoResult.insertedId }, { $set: { farvisionSynced: true, farvisionSyncedAt: new Date(), farvisionResponse: fvRes.data } });
+      } catch (fvErr) {
+        farvisionStatus = 'failed';
+        await database.collection(COL_LEADS).updateOne({ _id: mongoResult.insertedId }, { $set: { farvisionSynced: false, farvisionError: fvErr.message } });
+      }
     }
 
     res.status(201).json({ success: true, message: 'Lead saved successfully', _id: mongoResult.insertedId, id: mongoResult.insertedId, farvisionStatus });
@@ -220,6 +222,27 @@ app.patch('/api/leads/:id', async (req, res) => {
     const result = await database.collection(COL_LEADS).findOneAndUpdate({ _id: new ObjectId(req.params.id) }, { $set }, { returnDocument: 'after' });
     const updated = result?.value ?? result;
     if (!updated) return res.status(404).json({ error: 'Lead not found' });
+
+    // Push to Farvision ERP after OTP verification
+    if (req.body.pushToErp) {
+      try {
+        const payload = buildFarvisionPayload(updated);
+        const fvRes = await axios.request({ method: 'post', maxBodyLength: Infinity, url: FARVISION_URL, headers: { 'Content-Type': 'application/json' }, data: payload, timeout: 15000 });
+        await database.collection(COL_LEADS).updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { farvisionSynced: true, farvisionSyncedAt: new Date(), farvisionResponse: fvRes.data } }
+        );
+        return res.json({ ...updated, farvisionStatus: 'success' });
+      } catch (fvErr) {
+        await database.collection(COL_LEADS).updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { farvisionSynced: false, farvisionError: fvErr.message } }
+        );
+        // Still return success for the PATCH itself; ERP failure is non-blocking
+        return res.json({ ...updated, farvisionStatus: 'failed', farvisionError: fvErr.message });
+      }
+    }
+
     res.json(updated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -8,6 +8,120 @@ const API_BASE = (() => {
   return '';
 })();
 
+const GlassDropdown = ({ options, value, onChange, name, placeholder = "Select" }) => {
+  const [open, setOpen] = React.useState(false);
+  const [focusedIndex, setFocusedIndex] = React.useState(-1);
+  const ref = React.useRef();
+  const triggerRef = React.useRef();
+  const listRef = React.useRef();
+
+  React.useEffect(() => {
+    const close = (e) => {
+      if (!ref.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
+  // Scroll focused item into view
+  React.useEffect(() => {
+    if (open && focusedIndex >= 0 && listRef.current) {
+      const item = listRef.current.children[focusedIndex];
+      if (item) item.scrollIntoView({ block: "nearest" });
+    }
+  }, [focusedIndex, open]);
+
+  const select = (opt) => {
+    onChange({ target: { name, value: opt } });
+    setOpen(false);
+    setFocusedIndex(-1);
+    triggerRef.current?.focus();
+  };
+
+  const handleKeyDown = (e) => {
+    if (!open) {
+      if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setOpen(true);
+        // Pre-focus current value or first item
+        const idx = value ? options.indexOf(value) : 0;
+        setFocusedIndex(idx >= 0 ? idx : 0);
+      }
+      return;
+    }
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setFocusedIndex(i => Math.min(i + 1, options.length - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setFocusedIndex(i => Math.max(i - 1, 0));
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        if (focusedIndex >= 0) select(options[focusedIndex]);
+        break;
+      case "Escape":
+      case "Tab":
+        setOpen(false);
+        setFocusedIndex(-1);
+        break;
+      default:
+        // Jump to first option starting with typed letter
+        const letter = e.key.toLowerCase();
+        const match = options.findIndex(o => o.toLowerCase().startsWith(letter));
+        if (match >= 0) setFocusedIndex(match);
+    }
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <div
+        ref={triggerRef}
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={`dd-list-${name}`}
+        tabIndex={0}
+        onClick={() => { setOpen(o => !o); setFocusedIndex(value ? options.indexOf(value) : 0); }}
+        onKeyDown={handleKeyDown}
+        className="w-full bg-black/20 backdrop-blur-lg border border-white/10 rounded-lg px-3 py-2.5 text-white cursor-pointer flex justify-between items-center text-sm focus:outline-none focus:ring-2 focus:ring-gray-400 transition-all"
+      >
+        <span className={value ? "text-white" : "text-gray-400"}>
+          {value || placeholder}
+        </span>
+        <span className="text-gray-400 text-xs" aria-hidden="true">▼</span>
+      </div>
+      {open && (
+        <div
+          id={`dd-list-${name}`}
+          ref={listRef}
+          role="listbox"
+          aria-label={placeholder}
+          className="absolute z-50 mt-1 w-full rounded-lg overflow-auto max-h-56 backdrop-blur-xl bg-black/80 border border-black/90 shadow-xl"
+        >
+          {options.map((opt, i) => (
+            <div
+              key={i}
+              role="option"
+              aria-selected={opt === value}
+              onClick={() => select(opt)}
+              onMouseEnter={() => setFocusedIndex(i)}
+              className={`px-4 py-2 text-white cursor-pointer text-sm transition-colors ${
+                i === focusedIndex ? "bg-white/30" : "hover:bg-white/20"
+              }`}
+            >
+              {opt}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const LeadForm = () => {
   useEffect(() => {
     const link = document.createElement('link');
@@ -61,11 +175,11 @@ const LeadForm = () => {
     project: '',
     fullName: '', email: '', mobileNumber: '',
     address: '', locality: '', city: '', country: '', pinCode: '',
-    visitingFor: 'Self',
+    visitingFor: '',
     occupation: '', organization: '', industry: '', designation: '',
     officeLocation: '', officePinCode: '',
-    purposeOfPurchase: 'Personal Use', propertyType: '3 BHK',
-    currentResidentType: 'Own Residence', budgetRange: '1Cr - 1.25Cr',
+    purposeOfPurchase: '', propertyType: '',
+    currentResidentType: '', budgetRange: '',
     budgetRangeHigher: '', willBuyIn: '',
     hearAboutUs: '', referenceDetails: '',
     channelPartnerCompany: '', channelPartnerName: '',
@@ -80,12 +194,9 @@ const LeadForm = () => {
 
   // ── Background carousel ──
   const carouselImages = [
-    '/images/image1.png',
-    '/images/image3.jpeg',
-    '/images/image4.jpeg',
-    '/images/image6.jpeg'
+    '/images/backdrop.jpeg'
   ];
-  const CAROUSEL_INTERVAL = 6000; // ms between image changes
+  const CAROUSEL_INTERVAL = 9000; // ms between image changes
   const FADE_DURATION     = 1500; // ms for blur+fade (must match CSS transition below)
 
   const [currentBg, setCurrentBg]         = useState(0);
@@ -204,11 +315,11 @@ useEffect(() => {
     if (!validateForm()) { setError('Please fix the errors above'); return; }
     setError(''); setLoading(true);
     try {
-      // 1. Save to MongoDB + push to Farvision ERP (otpVerification: false by default)
+      // 1. Save to MongoDB ONLY — skipErp flag prevents Farvision push until OTP is verified
       const response = await fetch(`${API_BASE}/api/leads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, source: 'Website Form', status: 'New' }),
+        body: JSON.stringify({ ...formData, source: 'Website Form', status: 'New', skipErp: true }),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -247,12 +358,12 @@ useEffect(() => {
       const verifyData = await verifyRes.json().catch(() => ({}));
       if (!verifyRes.ok) throw new Error(verifyData.error || 'Incorrect OTP. Please try again.');
 
-      // 2. OTP correct — update otpVerification to true in MongoDB
+      // 2. OTP correct — update otpVerification to true AND push to Farvision ERP
       if (savedLeadId) {
         const patchRes = await fetch(`${API_BASE}/api/leads/${savedLeadId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ otpVerification: true }),
+          body: JSON.stringify({ otpVerification: true, pushToErp: true }),
         });
         if (!patchRes.ok) {
           const patchData = await patchRes.json().catch(() => ({}));
@@ -382,14 +493,13 @@ useEffect(() => {
                   </div>
                 ) : (
                   <>
-                    <select name="project" value={formData.project} onChange={handleInputChange} onBlur={handleBlur} className={inputStyle} required>
-                      <option value="">Select Project</option>
-                      {projects.map((p) => (
-                        <option key={String(p._id)} value={getProjectLabel(p)}>
-                          {getProjectLabel(p)}
-                        </option>
-                      ))}
-                    </select>
+                    <GlassDropdown
+                      name="project"
+                      value={formData.project}
+                      onChange={(e) => { handleInputChange(e); handleBlur(e); }}
+                      placeholder="Select Project"
+                      options={projects.map(p => getProjectLabel(p))}
+                    />
                     {errors.project && touched.project && <p className="text-red-400 text-xs mt-1">{errors.project}</p>}
                   </>
                 )}
@@ -463,11 +573,13 @@ useEffect(() => {
                 </div>
                 <div>
                   <label className={labelStyle}>Visiting / Meeting on behalf of</label>
-                  <select name="visitingFor" value={formData.visitingFor} onChange={handleInputChange} className={inputStyle}>
-                    <option value="Self">Self</option>
-                    <option value="Family">Family</option>
-                    <option value="Friend / Colleague">Friend / Colleague</option>
-                  </select>
+                  <GlassDropdown
+                    name="visitingFor"
+                    value={formData.visitingFor}
+                    onChange={handleInputChange}
+                    placeholder="Select Visiting"
+                    options={["Self", "Family", "Friend / Colleague"]}
+                  />
                 </div>
               </div>
             </div>
@@ -478,13 +590,13 @@ useEffect(() => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className={labelStyle}>Occupation</label>
-                  <select name="occupation" value={formData.occupation} onChange={handleInputChange} className={inputStyle}>
-                    <option value="">Select occupation</option>
-                    <option value="Salaried">Salaried</option>
-                    <option value="Self Employed">Self Employed</option>
-                    <option value="Professional">Professional</option>
-                    <option value="Retired">Retired</option>
-                  </select>
+                  <GlassDropdown
+                    name="occupation"
+                    value={formData.occupation}
+                    onChange={handleInputChange}
+                    placeholder="Select Occupation"
+                    options={["Salaried", "Self Employed", "Professional", "Retired"]}
+                  />
                 </div>
                 <div>
                   <label className={labelStyle}>Organization</label>
@@ -516,52 +628,53 @@ useEffect(() => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className={labelStyle}>Purpose of Purchase</label>
-                  <select name="purposeOfPurchase" value={formData.purposeOfPurchase} onChange={handleInputChange} className={inputStyle}>
-                    <option value="Personal Use">Personal Use</option>
-                    <option value="Investment">Investment</option>
-                    <option value="Second Home">Second Home</option>
-                  </select>
+                  <GlassDropdown
+                    name="purposeOfPurchase"
+                    value={formData.purposeOfPurchase}
+                    onChange={handleInputChange}
+                    placeholder="Select Purpose of Purchase"
+                    options={["Personal Use", "Investment", "Second Home"]}
+                  />
                 </div>
                 <div>
                   <label className={labelStyle}>Residential Configuration</label>
-                  <select name="propertyType" value={formData.propertyType} onChange={handleInputChange} className={inputStyle}>
-                    <option value="1 BHK">1 BHK</option>
-                    <option value="2 BHK">2 BHK</option>
-                    <option value="3 BHK (1 +1 JODI)">3 BHK (1 +1 JODI)</option>
-                    <option value="4 BHK (2+2 JODI)">4 BHK (2+2 JODI)</option>
-                  </select>
+                  <GlassDropdown
+                    name="propertyType"
+                    value={formData.propertyType}
+                    onChange={handleInputChange}
+                    placeholder="Select Property Type"
+                    options={["1 BHK", "2 BHK", "3 BHK (1 +1 JODI)", "4 BHK (2+2 JODI)"]}
+                  />
                 </div>
                 <div>
                   <label className={labelStyle}>Current Resident Type</label>
-                  <select name="currentResidentType" value={formData.currentResidentType} onChange={handleInputChange} className={inputStyle}>
-                    <option value="Own Residence">Own Residence</option>
-                    <option value="Company Provide">Company Provide</option>
-                    <option value="Rented">Rented</option>
-                  </select>
+                  <GlassDropdown
+                    name="currentResidentType"
+                    value={formData.currentResidentType}
+                    onChange={handleInputChange}
+                    placeholder="Select Resident Type"
+                    options={["Own Residence", "Company Provide", "Rented"]}
+                  />
                 </div>
                 <div>
                   <label className={labelStyle}>Budget Range (Rs.)</label>
-                  <select name="budgetRange" value={formData.budgetRange} onChange={handleInputChange} className={inputStyle}>
-                    <option value="1Cr - 1.25Cr">1Cr - 1.25Cr</option>
-                    <option value="1.26Cr - 1.50 Cr">1.26Cr - 1.50 Cr</option>
-                    <option value="1.51Cr - 1.75Cr">1.51Cr - 1.75Cr</option>
-                    <option value="1.76Cr - 2Cr">1.76Cr - 2Cr</option>
-                    <option value="2.01Cr - 2.25Cr">2.01Cr - 2.25Cr</option>
-                    <option value="2.26Cr Onwards">2.26Cr Onwards</option>
-                  </select>
+                  <GlassDropdown
+                    name="budgetRange"
+                    value={formData.budgetRange}
+                    onChange={handleInputChange}
+                    placeholder="Select Budget Range"
+                    options={["1Cr - 1.25Cr", "1.26Cr - 1.50 Cr", "1.51Cr - 1.75Cr", "1.76Cr - 2Cr", "2.01Cr - 2.25Cr", "2.26Cr Onwards"]}
+                  />
                 </div>
                 <div>
                   <label className={labelStyle}>Will Buy in (Period)</label>
-                  <select name="willBuyIn" value={formData.willBuyIn} onChange={handleInputChange} className={inputStyle}>
-                    <option value="3 months">3 months</option>
-                    <option value="6 months">6 months</option>
-                    <option value="9 months">9 months</option>
-                    <option value="12 months">12 months</option>
-                    <option value="15 months">15 months</option>
-                    <option value="18 months">18 months</option>
-                    <option value="21 months">21 months</option>
-                    <option value="24 months">24 months</option>
-                  </select>
+                  <GlassDropdown
+                    name="willBuyIn"
+                    value={formData.willBuyIn}
+                    onChange={handleInputChange}
+                    placeholder="Select Period"
+                    options={["3 months", "6 months", "9 months", "12 months", "15 months", "18 months", "21 months", "24 months"]}
+                  />
                 </div>
               </div>
             </div>
@@ -572,18 +685,13 @@ useEffect(() => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className={labelStyle}>Select Source</label>
-                  <select name="hearAboutUs" value={formData.hearAboutUs || ""} onChange={handleInputChange} className={inputStyle}>
-                    <option value="">Select Option</option>
-                    <option value="Website">Website</option>
-                    <option value="Online Portal">Online Portal</option>
-                    <option value="Newspaper">Newspaper</option>
-                    <option value="Hoarding">Hoarding</option>
-                    <option value="Email / SMS">Email / SMS</option>
-                    <option value="Direct Walk in">Direct Walk in</option>
-                    <option value="Event Exhibition">Event Exhibition</option>
-                    <option value="Channel Partner">Channel Partner</option>
-                    <option value="Others">Others</option>
-                  </select>
+                  <GlassDropdown
+                    name="hearAboutUs"
+                    value={formData.hearAboutUs}
+                    onChange={handleInputChange}
+                    placeholder="Select Option"
+                    options={["Website", "Online Portal", "Newspaper", "Hoarding", "Email / SMS", "Direct Walk in", "Event Exhibition", "Channel Partner", "Others"]}
+                  />
                 </div>
 
                 {formData.hearAboutUs === 'Channel Partner' && (
@@ -635,14 +743,13 @@ useEffect(() => {
                       <Loader2 className="w-4 h-4 animate-spin" /> Loading...
                     </div>
                   ) : (
-                    <select name="leadOwner" value={formData.leadOwner} onChange={handleInputChange} onBlur={handleBlur} className={inputStyle} required>
-                      <option value="">Select Lead Owner</option>
-                      {users.map((u) => (
-                        <option key={String(u._id)} value={getUserLabel(u)}>
-                          {getUserLabel(u)}
-                        </option>
-                      ))}
-                    </select>
+                    <GlassDropdown
+                      name="leadOwner"
+                      value={formData.leadOwner}
+                      onChange={(e) => { handleInputChange(e); handleBlur(e); }}
+                      placeholder="Select Lead Owner"
+                      options={users.map(u => getUserLabel(u))}
+                    />
                   )}
                   {errors.leadOwner && touched.leadOwner && <p className="text-red-400 text-xs mt-1">{errors.leadOwner}</p>}
                 </div>
