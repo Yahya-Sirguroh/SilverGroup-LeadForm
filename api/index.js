@@ -48,48 +48,104 @@ function buildFarvisionPayload(data) {
   const { firstName, lastName }  = splitName(data.fullName);
   const leadDate                 = new Date().toISOString().replace('T', ' ').substring(0, 19);
   const { budgetFrom, budgetTo } = parseBudget(data.budgetRange);
-  return {
-    firstName, lastName,
-    email:               data.email        || '',
-    cityID:              data.cityID     ||'',
+
+  const payload = {
+    firstName,
+    lastName,
+    email:               data.email             || '',
+    cityID:              data.cityID             || '',
     countryCode1:        91,
-    mobilePhone:         data.mobileNumber || '',
+    mobilePhone:         data.mobileNumber       || '',
     address1:            data.address      || '',
-    comments:            data.referenceDetails || '',
-    originFrom:          data.hearAboutUs      || 'Website Form',
-    product:             data.project          || '',
+    address: {
+      line1:       data.address      || null,
+      line2:       data.locality     || null,
+      countryDesc: data.country      || null,
+      cityDesc:    data.city         ? data.city.toUpperCase() : null,
+      zipCode:     data.pinCode      || null,
+    },
+    comments:            data.referenceDetails   || '',
+    originFrom:          data.hearAboutUs        || 'Website Form',
+    product:             data.project            || '',
     campaign:            '',
     externalAPIObjectId: 'Farvision',
-    occupationId:        data.occupation  || '',
-    industryId:          data.industry    || '',
-    designationId:       data.designation || '',
-    budgetFrom, budgetTo,
-    udF_17:              data.occupation   || '',
-    udF_18:              data.organization        || '',
-    udF_19:              data.officeLocation || '',
-    udF_20:              data.purposeOfPurchase           || '',
-    udF_21:              data.currentResidentType            || '',
-    udF_22:              data.willBuyIn           || '',
-    udF_23:              data.mobileNumber           || '',
-    udF_24:              data.mobileNumber           || '',
-    udF_25:              data.email           || '',
-    organization:        data.organization        || '',
-    officeLocation:      data.officeLocation      || '',
-    purposeOfPurchase:   data.purposeOfPurchase   || '',
-    typology:            data.propertyType        || '',
+    occupationId:        data.occupation         || '',
+    industryId:          data.industry           || '',
+    designationId:       data.designation        || '',
+    budgetFrom,
+    budgetTo,
+    udF_17:              data.occupation         || '',
+    udF_18:              data.organization       || '',
+    udF_19:              data.officeLocation     || '',
+    udF_20:              data.purposeOfPurchase  || '',
+    udF_21:              data.currentResidentType || '',
+    udF_22:              data.willBuyIn          || '',
+    udF_23:              data.mobileNumber       || '',
+    udF_24:              '',
+    udF_25:              data.email              || '',
+    organization:        data.organization       || '',
+    officeLocation:      data.officeLocation     || '',
+    purposeOfPurchase:   data.purposeOfPurchase  || '',
+    typology:            data.propertyType       || '',
     currentResidentType: data.currentResidentType || '',
-    willByInPeriod:      data.willBuyIn           || '',
-    ownerID:             data.leadOwner           || '',
+    willByInPeriod:      data.willBuyIn          || '',
+    ownerID:             data.leadOwner          || '',
     leadDate,
     DumpdataObjectId:    String(Math.floor(100000 + Math.random() * 900000)),
-    tenantId:            FARVISION_TENANT_ID,
+    tenantId:            Number(FARVISION_TENANT_ID),
   };
+
+  console.log('[Farvision] Built payload:', JSON.stringify(payload));
+  return payload;
+}
+
+// ─── FARVISION PUSH HELPER ───────────────────────────────────────────────────────
+async function pushToFarvision(database, leadId, leadData) {
+  try {
+    const payload = buildFarvisionPayload(leadData);
+    console.log('[Farvision] Pushing lead:', leadId);
+    console.log('[Farvision] Payload:', JSON.stringify(payload));
+
+    const fvRes = await axios.post(FARVISION_URL, payload, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 20000,
+      maxBodyLength: Infinity,
+    });
+
+    console.log('[Farvision] SUCCESS - HTTP:', fvRes.status, 'Body:', JSON.stringify(fvRes.data));
+
+    await database.collection(COL_LEADS).updateOne(
+      { _id: new ObjectId(leadId) },
+      { $set: {
+          farvisionSynced:    true,
+          farvisionSyncedAt:  new Date(),
+          farvisionResponse:  fvRes.data,
+          farvisionError:     null,
+      }}
+    );
+  } catch (fvErr) {
+    console.error('[Farvision] FAILED - Lead:', leadId);
+    console.error('[Farvision] Message:', fvErr.message);
+    if (fvErr.response) {
+      console.error('[Farvision] HTTP status:', fvErr.response.status);
+      console.error('[Farvision] Response body:', JSON.stringify(fvErr.response.data));
+    }
+    await database.collection(COL_LEADS).updateOne(
+      { _id: new ObjectId(leadId) },
+      { $set: {
+          farvisionSynced:      false,
+          farvisionError:       fvErr.message,
+          farvisionErrorDetail: fvErr.response?.data  || null,
+          farvisionErrorStatus: fvErr.response?.status || null,
+      }}
+    );
+  }
 }
 
 // ─── EXPRESS APP ──────────────────────────────────────────────────────────────
 const app = express();
 
-app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PATCH'], allowedHeaders: ['Content-Type'] }));
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE'], allowedHeaders: ['Content-Type'] }));
 app.use(express.json());
 
 // ── GET /api/projects
@@ -169,18 +225,22 @@ app.post('/api/leads', async (req, res) => {
     const existing = await database.collection(COL_LEADS).findOne({ mobileNumber: req.body.mobileNumber });
     if (existing) return res.status(409).json({ error: 'duplicate_mobile', message: 'Mobile number already registered.' });
 
+    // Strip control flags — never persist these in MongoDB
+    const { skipErp: _s, pushToErp: _p, ...cleanBody } = req.body;
+
     const leadData = {
-      ...req.body,
-      status:          req.body.status || 'New',
-      source:          req.body.source || 'Website Form',
+      ...cleanBody,
+      status:          cleanBody.status || 'New',
+      source:          cleanBody.source || 'Website Form',
       otpVerification: false,
+      farvisionSynced: false,
       createdAt:       new Date(),
       updatedAt:       new Date(),
     };
 
     const mongoResult = await database.collection(COL_LEADS).insertOne(leadData);
 
-    // Push to Farvision only when skipErp is NOT set
+    // Push to Farvision only when skipErp is NOT set (i.e. OTP already verified)
     let farvisionStatus = 'skipped';
     if (!req.body.skipErp) {
       try {
@@ -216,34 +276,107 @@ app.get('/api/leads/:id', async (req, res) => {
 app.patch('/api/leads/:id', async (req, res) => {
   try {
     const database = await getDB();
-    const allowed = ['status', 'assignedTo', 'willBuyIn', 'notes', 'project', 'family', 'reason', 'funding', 'inventoryPitched', 'quotation', 'interested', 'ageGroup', 'occupation', 'caste', 'comments', 'revisitDate', 'nextFollowUp', 'otpVerification'];
-    const $set = { updatedAt: new Date() };
-    for (const key of allowed) { if (req.body[key] !== undefined) $set[key] = req.body[key]; }
-    const result = await database.collection(COL_LEADS).findOneAndUpdate({ _id: new ObjectId(req.params.id) }, { $set }, { returnDocument: 'after' });
-    const updated = result?.value ?? result;
-    if (!updated) return res.status(404).json({ error: 'Lead not found' });
 
-    // Push to Farvision ERP after OTP verification
-    if (req.body.pushToErp) {
-      try {
-        const payload = buildFarvisionPayload(updated);
-        const fvRes = await axios.request({ method: 'post', maxBodyLength: Infinity, url: FARVISION_URL, headers: { 'Content-Type': 'application/json' }, data: payload, timeout: 15000 });
-        await database.collection(COL_LEADS).updateOne(
-          { _id: new ObjectId(req.params.id) },
-          { $set: { farvisionSynced: true, farvisionSyncedAt: new Date(), farvisionResponse: fvRes.data } }
-        );
-        return res.json({ ...updated, farvisionStatus: 'success' });
-      } catch (fvErr) {
-        await database.collection(COL_LEADS).updateOne(
-          { _id: new ObjectId(req.params.id) },
-          { $set: { farvisionSynced: false, farvisionError: fvErr.message } }
-        );
-        // Still return success for the PATCH itself; ERP failure is non-blocking
-        return res.json({ ...updated, farvisionStatus: 'failed', farvisionError: fvErr.message });
-      }
+    // All form fields the frontend can update (covers both "go back & edit" and post-OTP patch)
+    const allowed = [
+      'project', 'fullName', 'email', 'mobileNumber', 'address', 'locality', 'city', 'country', 'pinCode',
+      'visitingFor', 'occupation', 'organization', 'industry', 'designation', 'officeLocation', 'officePinCode',
+      'purposeOfPurchase', 'propertyType', 'currentResidentType', 'budgetRange', 'willBuyIn',
+      'hearAboutUs', 'referenceDetails',
+      'channelPartnerCompany', 'channelPartnerName', 'channelPartnerMobile', 'channelPartnerRERA', 'channelPartnerEmail',
+      'leadOwner',
+      // CRM / internal fields
+      'status', 'assignedTo', 'notes', 'family', 'reason', 'funding', 'inventoryPitched',
+      'quotation', 'interested', 'ageGroup', 'caste', 'comments',
+      'revisitDate', 'nextFollowUp', 'otpVerification',
+    ];
+
+    const $set = { updatedAt: new Date() };
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) $set[key] = req.body[key];
     }
 
-    res.json(updated);
+    // Step 1: update the document
+    const updateResult = await database.collection(COL_LEADS).updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set }
+    );
+    if (updateResult.matchedCount === 0) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    // Step 2: re-fetch as a clean plain JS object — avoids BSON ObjectId spread crash
+    const updated = await database.collection(COL_LEADS).findOne(
+      { _id: new ObjectId(req.params.id) }
+    );
+    if (!updated) return res.status(404).json({ error: 'Lead not found after update' });
+
+    // Step 3: push to Farvision ERP after OTP verification
+    // IMPORTANT: On Vercel serverless, fire-and-forget after res.send() is killed immediately.
+    // We MUST await the push BEFORE responding, then always return 200 regardless of ERP result.
+    if (req.body.pushToErp) {
+      let farvisionStatus = 'pending';
+      let farvisionError  = null;
+      try {
+        const payload = buildFarvisionPayload(updated);
+        console.log('[Farvision] Pushing lead:', req.params.id);
+        console.log('[Farvision] Payload:', JSON.stringify(payload));
+
+        const fvRes = await axios.post(FARVISION_URL, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 25000,       // 25s — must complete before Vercel's 30s max
+          maxBodyLength: Infinity,
+        });
+
+        console.log('[Farvision] SUCCESS - HTTP:', fvRes.status, 'Body:', JSON.stringify(fvRes.data));
+        farvisionStatus = 'success';
+
+        await database.collection(COL_LEADS).updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: {
+              farvisionSynced:    true,
+              farvisionSyncedAt:  new Date(),
+              farvisionResponse:  fvRes.data,
+              farvisionError:     null,
+          }}
+        );
+      } catch (fvErr) {
+        farvisionStatus = 'failed';
+        farvisionError  = fvErr.message;
+        console.error('[Farvision] FAILED - Lead:', req.params.id);
+        console.error('[Farvision] Message:', fvErr.message);
+        if (fvErr.response) {
+          console.error('[Farvision] HTTP status:', fvErr.response.status);
+          console.error('[Farvision] Response body:', JSON.stringify(fvErr.response.data));
+        }
+        await database.collection(COL_LEADS).updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: {
+              farvisionSynced:      false,
+              farvisionError:       fvErr.message,
+              farvisionErrorDetail: fvErr.response?.data  || null,
+              farvisionErrorStatus: fvErr.response?.status || null,
+          }}
+        );
+      }
+      // Always return 200 — OTP is verified regardless of ERP result
+      return res.json({ success: true, farvisionStatus, farvisionError });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[PATCH /api/leads/:id] Unhandled error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DELETE /api/leads/:id  (used when user goes back and changes mobile number)
+app.delete('/api/leads/:id', async (req, res) => {
+  try {
+    const database = await getDB();
+    const result = await database.collection(COL_LEADS).deleteOne({ _id: new ObjectId(req.params.id) });
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Lead not found' });
+    res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -276,6 +409,48 @@ app.post('/api/verify-otp', (req, res) => {
   if (String(otp).trim() !== record.otp) return res.status(400).json({ error: 'Incorrect OTP. Please try again.' });
   otpStore.delete(mobile);
   res.json({ success: true, message: 'OTP verified successfully' });
+});
+
+// ── POST /api/retry-farvision/:id  (retry Farvision push for a failed/pending lead)
+app.post('/api/retry-farvision/:id', async (req, res) => {
+  try {
+    const database = await getDB();
+    const lead = await database.collection(COL_LEADS).findOne({ _id: new ObjectId(req.params.id) });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    if (!lead.otpVerification) return res.status(400).json({ error: 'OTP not verified for this lead. Cannot push to ERP.' });
+
+    // Await push — fire-and-forget does NOT work on Vercel serverless
+    await pushToFarvision(database, req.params.id, lead);
+    res.json({ success: true, message: 'Farvision push completed' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── GET /api/debug/farvision/:id  (test Farvision push for any lead — remove in production)
+app.get('/api/debug/farvision/:id', async (req, res) => {
+  try {
+    const database = await getDB();
+    const lead = await database.collection(COL_LEADS).findOne({ _id: new ObjectId(req.params.id) });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const payload = buildFarvisionPayload(lead);
+    console.log('[DEBUG Farvision] Payload:', JSON.stringify(payload, null, 2));
+
+    try {
+      const fvRes = await axios.post(FARVISION_URL, payload, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 15000,
+      });
+      res.json({ status: 'success', httpStatus: fvRes.status, farvisionResponse: fvRes.data, payloadSent: payload });
+    } catch (fvErr) {
+      res.json({
+        status: 'failed',
+        error: fvErr.message,
+        httpStatus: fvErr.response?.status,
+        farvisionResponse: fvErr.response?.data,
+        payloadSent: payload,
+      });
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── GET /health

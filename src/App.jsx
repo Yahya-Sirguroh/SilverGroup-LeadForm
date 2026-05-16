@@ -190,7 +190,10 @@ const LeadForm = () => {
   const [isMobileFocused, setIsMobileFocused] = useState(false);
   const [checkingMobile, setCheckingMobile] = useState(false);
   const [savedLeadId, setSavedLeadId] = useState(null);   // stores _id after pre-OTP save
+  const [mobileAtSubmit, setMobileAtSubmit] = useState(''); // mobile number at the time of initial save
   const [otp, setOtp] = useState('');
+  const [editingMobile, setEditingMobile] = useState(false);   // show inline mobile edit on OTP screen
+  const [otpMobile, setOtpMobile] = useState('');              // the number shown/editable on OTP screen
 
   // ── Background carousel ──
   const carouselImages = [
@@ -244,6 +247,7 @@ useEffect(() => {
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
+    console.log("OTP:",otp);
     if (type === 'checkbox') {
       setFormData(prev => {
         const arr = prev[name] || [];
@@ -312,10 +316,39 @@ useEffect(() => {
 
   const handleInitialSubmit = async (e) => {
     e.preventDefault();
-    if (!validateForm()) { setError('Please fix the errors above'); return; }
+    if (!validateForm()) { setError('Please fix the errors below'); return; }
     setError(''); setLoading(true);
     try {
-      // 1. Save to MongoDB ONLY — skipErp flag prevents Farvision push until OTP is verified
+      let leadId = savedLeadId;
+
+      if (savedLeadId) {
+        // ── User went back and re-submitted — PATCH the existing record ──
+        const mobileChanged = formData.mobileNumber !== mobileAtSubmit;
+
+        if (mobileChanged) {
+          // Delete the old lead (old mobile), then create a fresh one with new mobile
+          await fetch(`${API_BASE}/api/leads/${savedLeadId}`, { method: 'DELETE' });
+          setSavedLeadId(null);
+          leadId = null;
+        } else {
+          // Same mobile — just update the existing lead
+          const patchRes = await fetch(`${API_BASE}/api/leads/${savedLeadId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...formData }),
+          });
+          if (!patchRes.ok) {
+            const patchData = await patchRes.json().catch(() => ({}));
+            throw new Error(patchData.error || 'Failed to update lead. Please try again.');
+          }
+          // Lead updated — send new OTP and go to step 2
+          const otpResult = await sendOTP(formData.mobileNumber);
+          if (otpResult.success) { setOtpMobile(formData.mobileNumber); setStep(2); return; }
+          else throw new Error('Failed to send OTP');
+        }
+      }
+
+      // ── Fresh submission (or mobile changed after going back) ──
       const response = await fetch(`${API_BASE}/api/leads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -324,7 +357,6 @@ useEffect(() => {
 
       const data = await response.json().catch(() => ({}));
 
-      // Duplicate mobile fallback (should be caught onBlur, but just in case)
       if (response.status === 409 || data.error === 'duplicate_mobile') {
         setErrors(prev => ({ ...prev, mobileNumber: 'Mobile number already exist' }));
         setTouched(prev => ({ ...prev, mobileNumber: true }));
@@ -335,12 +367,16 @@ useEffect(() => {
         throw new Error(data.error || data.message || 'Submission failed. Please try again.');
       }
 
-      // 2. Store the new lead _id so we can PATCH it after OTP
-      setSavedLeadId(data._id || data.id);
+      leadId = data._id || data.id;
+      setSavedLeadId(leadId);
+      setMobileAtSubmit(formData.mobileNumber);
 
-      // 3. Send OTP via GupShup
       const otpResult = await sendOTP(formData.mobileNumber);
-      if (otpResult.success) setStep(2); else throw new Error('Failed to send OTP');
+      if (otpResult.success) {
+        setOtpMobile(formData.mobileNumber); // seed the editable mobile field
+        setStep(2);
+      } else throw new Error('Failed to send OTP');
+
     } catch (err) { setError(err.message || 'Failed to submit. Please try again.'); }
     finally { setLoading(false); }
   };
@@ -349,7 +385,7 @@ useEffect(() => {
     if (otp.length !== 6) { setError('Please enter 6-digit OTP'); return; }
     setError(''); setLoading(true);
     try {
-      // 1. Verify OTP with GupShup store on server
+      // 1. Verify OTP
       const verifyRes = await fetch(`${API_BASE}/api/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -358,12 +394,20 @@ useEffect(() => {
       const verifyData = await verifyRes.json().catch(() => ({}));
       if (!verifyRes.ok) throw new Error(verifyData.error || 'Incorrect OTP. Please try again.');
 
-      // 2. OTP correct — update otpVerification to true AND push to Farvision ERP
+      // 2. OTP verified — update MongoDB record and trigger Farvision ERP push
       if (savedLeadId) {
+        // Send full formData so any edits made via "go back" are captured,
+        // plus the two control flags the backend acts on.
+        // We explicitly list pushToErp so it is never accidentally omitted.
+        const patchBody = {
+          ...formData,
+          otpVerification: true,
+          pushToErp:       true,   // ← backend will fire-and-forget to Farvision after responding
+        };
         const patchRes = await fetch(`${API_BASE}/api/leads/${savedLeadId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ otpVerification: true, pushToErp: true }),
+          body: JSON.stringify(patchBody),
         });
         if (!patchRes.ok) {
           const patchData = await patchRes.json().catch(() => ({}));
@@ -379,10 +423,59 @@ useEffect(() => {
     }
   };
 
+  // ── Update mobile on OTP screen and resend OTP to new number ──
+  const handleMobileUpdate = async () => {
+    const trimmed = otpMobile.trim();
+    if (!/^[6-9]\d{9}$/.test(trimmed)) {
+      setError('Enter a valid 10-digit mobile number');
+      return;
+    }
+    setError(''); setLoading(true);
+    try {
+      // Check for duplicate only if number changed
+      if (trimmed !== formData.mobileNumber) {
+        const dupRes = await fetch(`${API_BASE}/api/leads/check-mobile/${trimmed}`);
+        const dupData = await dupRes.json();
+        if (dupData.exists) {
+          setError('This mobile number is already registered');
+          return;
+        }
+        // Patch MongoDB with the new mobile number
+        if (savedLeadId) {
+          await fetch(`${API_BASE}/api/leads/${savedLeadId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mobileNumber: trimmed }),
+          });
+        }
+        // Update formData so everything downstream uses the new number
+        setFormData(prev => ({ ...prev, mobileNumber: trimmed }));
+        setMobileAtSubmit(trimmed);
+      }
+      // Send OTP to (possibly new) number
+      setOtp('');
+      await sendOTP(trimmed);
+      setEditingMobile(false);
+    } catch (err) {
+      setError(err.message || 'Failed to update mobile. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const resendOTP = async () => {
     setOtp(''); setError(''); setLoading(true);
     try { await sendOTP(formData.mobileNumber); } catch (err) { setError(err.message || 'Failed to resend OTP.'); }
     finally { setLoading(false); }
+  };
+
+  // ── Go back from OTP screen to form — data stays intact ──
+  const handleGoBack = () => {
+    setOtp('');
+    setError('');
+    setStep(1);
+    // Note: formData, savedLeadId, mobileAtSubmit are all preserved.
+    // handleInitialSubmit will detect savedLeadId on re-submit and PATCH instead of POST.
   };
 
   const resetForm = () => {
@@ -399,7 +492,7 @@ useEffect(() => {
       channelPartnerName: '', channelPartnerMobile: '', channelPartnerRERA: '',
       channelPartnerEmail: '', leadOwner: ''
     });
-    setOtp(''); setError(''); setErrors({}); setTouched({}); setSavedLeadId(null);
+    setOtp(''); setError(''); setErrors({}); setTouched({}); setSavedLeadId(null); setMobileAtSubmit('');
   };
 
   return (
@@ -457,7 +550,6 @@ useEffect(() => {
           <h1 className="text-3xl md:text-4xl font-light text-white tracking-widest uppercase" style={{ fontFamily: "'Playfair Display', serif" }}>
             Silver Group
           </h1>
-          <p className="text-gray-300 mt-2 italic font-light">Lead Form</p>
         </div>
 
         {/* Dropdown loading / error banner */}
@@ -595,7 +687,7 @@ useEffect(() => {
                     value={formData.occupation}
                     onChange={handleInputChange}
                     placeholder="Select Occupation"
-                    options={["Salaried", "Self Employed", "Professional", "Retired"]}
+                    options={["AFC", "Business Owner Entrepreneur", "Doctor", "IT Professional", "Operation Manager", "Project Manager", "OTHERS"]}
                   />
                 </div>
                 <div>
@@ -604,11 +696,23 @@ useEffect(() => {
                 </div>
                 <div>
                   <label className={labelStyle}>Industry</label>
-                  <input type="text" name="industry" value={formData.industry} onChange={handleInputChange} placeholder="Enter industry" className={inputStyle} />
+                  <GlassDropdown
+                    name="industry"
+                    value={formData.industry}
+                    onChange={handleInputChange}
+                    placeholder="Select Industry"
+                    options={["Construction & Real Estate", "Healthcare & Pharmaceuticals", "IT & Professional Services", "Logistics & Disribution", "Manufacturing", "Retail & E-commerce", "OTHERS"]}
+                  />
                 </div>
                 <div>
                   <label className={labelStyle}>Designation</label>
-                  <input type="text" name="designation" value={formData.designation} onChange={handleInputChange} placeholder="Enter designation" className={inputStyle} />
+                  <GlassDropdown
+                    name="designation"
+                    value={formData.designation}
+                    onChange={handleInputChange}
+                    placeholder="Select Designation"
+                    options={["CEO", "CFO", "COO", "CIO", "Project Manager", "OTHERS"]}
+                  />
                 </div>
                 <div>
                   <label className={labelStyle}>Office Location</label>
@@ -766,25 +870,95 @@ useEffect(() => {
         {/* ── STEP 2: OTP ── */}
         {step === 2 && (
           <div className="max-w-md mx-auto text-center otp-section">
+            {/* ← Back / Edit Details */}
+            <div className="flex justify-start mb-6">
+              <button
+                onClick={handleGoBack}
+                className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm group"
+              >
+                <span className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 group-hover:bg-white/20 transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </span>
+                Edit Details
+              </button>
+            </div>
             <div className="mb-6">
               <div className="w-20 h-20 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
                 <Phone className="w-10 h-10 text-gray-300" />
               </div>
               <h2 className="text-2xl text-white mb-2" style={{ fontFamily: "'Playfair Display', serif" }}>Verify Your Number</h2>
-              <p className="text-gray-400">We've sent a 6-digit code to<br /><span className="text-white font-semibold">+91 {formData.mobileNumber}</span></p>
+
+              {/* Mobile number display / inline edit */}
+              {editingMobile ? (
+                <div className="mt-3">
+                  <p className="text-gray-400 text-sm mb-2">Enter new mobile number</p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white font-semibold text-sm whitespace-nowrap"></span>
+                    <input
+                      type="tel"
+                      value={otpMobile}
+                      onChange={(e) => setOtpMobile(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                      placeholder="Enter mobile number"
+                      className={`${inputStyle} text-center tracking-widest`}
+                      maxLength="10"
+                      autoFocus
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleMobileUpdate(); if (e.key === 'Escape') { setEditingMobile(false); setOtpMobile(formData.mobileNumber); setError(''); } }}
+                    />
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => { setEditingMobile(false); setOtpMobile(formData.mobileNumber); setError(''); }}
+                      disabled={loading}
+                      className="flex-1 py-2.5 rounded-full border border-white/20 text-gray-300 hover:text-white hover:border-white/40 transition-colors text-sm disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleMobileUpdate}
+                      disabled={loading || otpMobile.length !== 10}
+                      className="flex-1 bg-gradient-to-r from-gray-200 to-gray-400 text-black font-bold py-2.5 rounded-full hover:scale-105 active:scale-95 transition-transform duration-200 uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center justify-center gap-1"
+                    >
+                      {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Sending...</> : 'Send OTP'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-gray-400 mt-2">
+                  We've sent a 6-digit code to<br />
+                  <span className="text-white font-semibold">+91 {formData.mobileNumber}</span>
+                  <button
+                    onClick={() => { setOtpMobile(formData.mobileNumber); setEditingMobile(true); setError(''); }}
+                    className="ml-2 text-gray-400 hover:text-white transition-colors inline-flex items-center gap-1 text-xs underline underline-offset-2"
+                    title="Change mobile number"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H7v-3.414a2 2 0 01.586-1.414z" />
+                    </svg>
+                    Change
+                  </button>
+                </p>
+              )}
             </div>
-            <div className="mb-6">
-              <label className={labelStyle}>Enter OTP</label>
-              <input type="text" value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="000000" className={`${inputStyle} text-center text-2xl tracking-widest`} maxLength="6" autoFocus />
-            </div>
-            <button onClick={verifyOtpAndSubmit} disabled={loading || otp.length !== 6}
-              className="w-full bg-gradient-to-r from-gray-200 to-gray-400 text-black font-bold py-4 rounded-full hover:scale-105 active:scale-95 transition-transform duration-200 shadow-xl uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-              {loading ? <><Loader2 className="w-5 h-5 animate-spin" />Verifying...</> : 'Verify & Submit'}
-            </button>
-            <button onClick={resendOTP} disabled={loading} className="mt-4 text-gray-400 hover:text-white transition-colors text-sm underline">
-              Didn't receive code? Resend OTP
-            </button>
+
+            {/* OTP input — hidden while editing mobile */}
+            {!editingMobile && (
+              <>
+                <div className="mb-6">
+                  <label className={labelStyle}>Enter OTP</label>
+                  <input type="text" value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="000000" className={`${inputStyle} text-center text-2xl tracking-widest`} maxLength="6" autoFocus />
+                </div>
+                <button onClick={verifyOtpAndSubmit} disabled={loading || otp.length !== 6}
+                  className="w-full bg-gradient-to-r from-gray-200 to-gray-400 text-black font-bold py-4 rounded-full hover:scale-105 active:scale-95 transition-transform duration-200 shadow-xl uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                  {loading ? <><Loader2 className="w-5 h-5 animate-spin" />Verifying...</> : 'Verify & Submit'}
+                </button>
+                <button onClick={resendOTP} disabled={loading} className="mt-4 text-gray-400 hover:text-white transition-colors text-sm underline">
+                  Didn't receive code? Resend OTP
+                </button>
+              </>
+            )}
           </div>
         )}
 
